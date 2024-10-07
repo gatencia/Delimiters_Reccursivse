@@ -1,0 +1,425 @@
+(* Left and right parentheses *)
+datatype par = LPAR | RPAR
+type pList = par list
+
+(* Parse tree for parentheses *)
+datatype pTree = empty                (* no parentheses *)
+               | nested of pTree      (* nested parentheses *)
+               | sbs of pTree * pTree (* side by side *)
+
+(* Stack of either open parentheses or parse trees *)
+datatype stackItem = OPEN
+                   | T of pTree
+type stack = stackItem list
+
+(********************* Begin utility functions *********************)
+
+(* pList_fromString : string -> pList
+ * ENSURES: Converts the string of parentheses s into the corresponding
+ *          entity ps of type pList; raises an exception if s
+ *          contains characters other than "(" and ")".
+ *)
+fun pList_fromString (s: string): pList =
+  let
+    fun pts (cs: char list): pList =
+      case cs of
+        [] => []
+      | #"("::l => LPAR :: pts l
+      | #")"::l => RPAR :: pts l
+      | _ => raise Fail ("Bad parentheses string starting at " ^ String.implode cs)
+  in
+    pts (String.explode s)
+  end
+
+(* pList_toString : pList -> string
+ * ENSURES: Converts pl into a string.
+ *)
+fun pList_toString (pl: pList): string =
+  case pl of
+    [] => ""
+  | LPAR::ps => "(" ^ pList_toString ps
+  | RPAR::ps => ")" ^ pList_toString ps
+
+(* pTree_toString : pTree -> string
+ * ENSURES: Converts the given parse tree pt into a string.
+ *)
+fun pTree_toString (pt: pTree): string =
+  case pt of
+    empty => ""
+  | nested t => "(" ^ pTree_toString t ^ ")"
+  | sbs (t1, t2) => pTree_toString t1 ^ pTree_toString t2
+
+(* stack_toString : stack -> string
+ * ENSURES: Converts the given stack st into a string.
+ *)
+fun stack_toString (st: stack): string =
+  case st of
+    [] => "#"
+  | OPEN::S => "( | " ^ stack_toString S
+  | T t::S  => pTree_toString t ^ " | " ^ stack_toString S
+
+(********************** End utility functions **********************)
+
+(* valid : pList -> bool
+ * REQUIRES: None.
+ * ENSURES: Returns true if ps represents a valid sequence of balanced parentheses,
+ *          false otherwise.
+ *)
+fun valid (ps: pList): bool =
+  let
+    (* valid' : pList * int -> bool
+     * REQUIRES: count >= 0.
+     * ENSURES: Returns true if ps represents a valid sequence of balanced parentheses,
+     *          with count unmatched open parentheses.
+     *)
+    fun valid' (ps: pList, count: int): bool =
+      if count < 0 then false
+      else
+        case ps of
+          [] => count = 0
+        | LPAR :: rest => valid' (rest, count + 1)
+        | RPAR :: rest => valid' (rest, count - 1)
+  in
+    valid' (ps, 0)
+  end
+
+(* flattenPTree : pTree -> pList
+ * REQUIRES: None.
+ * ENSURES: Returns the list of parentheses corresponding to the parse tree pt.
+ *)
+fun flattenPTree (pt: pTree): pList =
+  case pt of
+    empty => []
+  | nested t => LPAR :: flattenPTree t @ [RPAR]
+  | sbs (t1, t2) => flattenPTree t1 @ flattenPTree t2
+
+(* collectSubtrees : stack * pTree list -> stack * pTree list
+ * REQUIRES: None.
+ * ENSURES: Returns the updated stack and list of subtrees collected until an OPEN is found.
+ *)
+fun collectSubtrees (stack: stack, subtrees: pTree list): stack * pTree list =
+  case stack of
+    T t :: rest => collectSubtrees (rest, t :: subtrees)
+  | OPEN :: rest => (rest, subtrees)
+  | _ => raise Fail "Unmatched right parenthesis"
+
+(* processStack : stack -> stack
+ * REQUIRES: None.
+ * ENSURES: Combines adjacent T items on the stack using sbs, returns the updated stack.
+ *)
+fun processStack (stack: stack): stack =
+  case stack of
+    T t1 :: T t2 :: rest => processStack (T (sbs (t1, t2)) :: rest)
+  | _ => stack
+
+(* pp : pList * stack -> pTree
+ * REQUIRES: None.
+ * ENSURES: Parses the pList ps into a pTree, using the stack.
+ *)
+fun pp (ps: pList, stack: stack): pTree =
+  case ps of
+    [] =>
+      (case stack of
+         [T t] => t
+       | _ => raise Fail "Invalid input or incomplete processing")
+  | LPAR :: rest => pp (rest, OPEN :: stack)
+  | RPAR :: rest =>
+      let
+        val (newStack, subtrees) = collectSubtrees (stack, [])
+        val contentTree =
+          case subtrees of
+            [] => empty
+          | ts => List.foldr sbs empty ts
+        val nestedTree = nested contentTree
+        val updatedStack = T nestedTree :: newStack
+        val finalStack = processStack updatedStack
+      in
+        pp (rest, finalStack)
+      end
+  | _ => raise Fail "Invalid input"
+
+(* parsePar : pList -> pTree
+ * REQUIRES: None.
+ * ENSURES: Parses the pList ps into a pTree.
+ *)
+fun parsePar (ps: pList): pTree =
+  pp (ps, [])
+
+(* TEST CASES FOR valid *)
+
+val true = valid (pList_fromString "(()())")
+val true = valid (pList_fromString "()()")
+val false = valid (pList_fromString ")(())")
+val true = valid (pList_fromString "")
+val true = valid (pList_fromString "((()))")
+val false = valid (pList_fromString "(()")
+val false = valid (pList_fromString "())")
+val true = valid (pList_fromString "()(()())")
+
+(* TEST CASES FOR flattenPTree *)
+
+val t1 = nested empty
+val t2 = sbs (nested empty, nested empty)
+val t3 = nested (sbs (nested empty, nested empty))
+val [] = flattenPTree empty
+val [LPAR, RPAR] = flattenPTree t1
+val [LPAR, RPAR, LPAR, RPAR] = flattenPTree t2
+val [LPAR, LPAR, RPAR, LPAR, RPAR, RPAR] = flattenPTree t3
+val [LPAR, LPAR, LPAR, RPAR, RPAR, RPAR] = flattenPTree (nested (nested (nested empty)))
+val [LPAR, RPAR, LPAR, LPAR, RPAR, RPAR] = flattenPTree (sbs (nested empty, nested (nested empty)))
+
+(* TEST CASES FOR pp and parsePar *)
+
+val nested empty = pp (pList_fromString "()", [])
+val sbs (nested empty, nested empty) = pp (pList_fromString "()()", [])
+val nested (sbs (nested empty, nested empty)) = pp (pList_fromString "(()())", [])
+val nested (sbs (nested empty, nested (nested (nested empty)))) = pp (pList_fromString "(()((())))", [])
+val nested empty = parsePar (pList_fromString "()")
+val nested (sbs (nested (nested empty), nested empty)) = parsePar (pList_fromString "((())())")
+val sbs (nested empty, nested empty) = parsePar (pList_fromString "()()")
+val nested (nested empty) = parsePar (pList_fromString "(())")
+
+(* Additional TEST CASES for helper functions *)
+
+(* Test case for collectSubtrees *)
+val stack_example = [T (nested empty), T (nested empty), OPEN, T (nested empty)]
+val ([T t], [nested empty, nested empty]) = collectSubtrees (stack_example, [])
+
+(* Test case for processStack *)
+val stack_example2 = [T (nested empty), T (nested empty), T (nested empty)]
+val [T t_combined] = processStack stack_example2
+val sbs (nested empty, sbs (nested empty, nested empty)) = t_combined
+
+(* Test case for collectSubtrees with unmatched right parenthesis *)
+(* This will raise an exception *)
+(* val _ = collectSubtrees ([T (nested empty)], []) *)
+
+(* Test case for processStack with no adjacent T items *)
+val [OPEN] = processStack [OPEN]
+
+(******************************* BONUS PART ******************************)
+
+(* Left and right delimiters *)
+datatype par2 = L of string | R of string
+type pList2 = par2 list
+
+(* Parse tree for parentheses *)
+datatype pTree2 = empty2                     (* no parentheses *)
+                | nested2 of string * pTree2 (* nested parentheses *)
+                | sbs2 of pTree2 * pTree2    (* side by side *)
+
+(* Stack of either open parentheses or parse trees *)
+datatype stackItem2 = OPEN2 of string
+                    | T2 of pTree2
+type stack2 = stackItem2 list
+
+(********************* Begin utility functions *********************)
+
+(* pList2_fromString : string -> pList2
+ * ENSURES: Converts the string s of delimiters into the corresponding
+ *          entity pl2 of type pList2.
+ *)
+fun pList2_fromString (s: string): pList2 =
+  let
+    datatype del = Ld | Rd
+    fun parsed (Ld, acc) = L (String.implode (List.rev acc))
+      | parsed (Rd, acc) = R (String.implode (List.rev acc))
+    fun scan (cs: char list, w: del * char list): pList2 =
+      case (cs, w) of
+        ([], _) => [parsed w]
+      | (#"("::cs', _) => parsed w :: scan (cs', (Ld, []))
+      | (#")"::cs', _) => parsed w :: scan (cs', (Rd, []))
+      | (c::cs', (d, acc)) => scan (cs', (d, c::acc))
+    fun pfs (cs: char list): pList2 =
+      case cs of
+        [] => []
+      | #"("::cs' => scan (cs', (Ld, []))
+      | #")"::cs' => scan (cs', (Rd, []))
+      | _ => raise Fail ("Malformed delimiter string " ^ String.implode cs)
+  in
+    pfs (String.explode s)
+  end
+
+(* pList2_toString : pList2 -> string
+ * ENSURES: Converts pl2 into a string.
+ *)
+fun pList2_toString (pl2: pList2): string =
+  case pl2 of
+    [] => ""
+  | L s::ps => "(" ^ s ^ pList2_toString ps
+  | R s::ps => ")" ^ s ^ pList2_toString ps
+
+(* pTree2_toString : pTree2 -> string
+ * ENSURES: Converts the given parse tree pt2 into a string.
+ *)
+fun pTree2_toString (pt2: pTree2): string =
+  case pt2 of
+    empty2 => ""
+  | nested2 (s, t) => "(" ^ s ^ pTree2_toString t ^ ")" ^ s
+  | sbs2 (t1, t2) => pTree2_toString t1 ^ pTree2_toString t2
+
+(* stack2_toString : stack2 -> string
+ * ENSURES: Converts the given stack st2 into a string.
+ *)
+fun stack2_toString (st2: stack2): string =
+  case st2 of
+    [] => "#"
+  | OPEN2 s::S => "(" ^ s ^ " | " ^ stack2_toString S
+  | T2 t::S  => pTree2_toString t ^ " | " ^ stack2_toString S
+
+(********************** End utility functions **********************)
+
+(* valid2 : pList2 -> bool
+ * REQUIRES: None.
+ * ENSURES: Returns true if ps represents a valid sequence of balanced delimiters,
+ *          false otherwise.
+ *)
+fun valid2 (ps: pList2): bool =
+  let
+    (* helper : pList2 * string list -> bool
+     * REQUIRES: None.
+     * ENSURES: Returns true if ps represents a valid sequence of balanced delimiters,
+     *          with stack representing unmatched open delimiters.
+     *)
+    fun helper (ps: pList2, stack: string list): bool =
+      case ps of
+        [] => stack = []
+      | L s :: rest => helper (rest, s :: stack)
+      | R s :: rest =>
+          case stack of
+            top :: stackTail =>
+              if s = top then
+                helper (rest, stackTail)
+              else
+                false
+          | [] => false
+  in
+    helper (ps, [])
+  end
+
+(* flattenPTree2 : pTree2 -> pList2
+ * REQUIRES: None.
+ * ENSURES: Returns the list of delimiters corresponding to the parse tree pt.
+ *)
+fun flattenPTree2 (pt: pTree2): pList2 =
+  case pt of
+    empty2 => []
+  | nested2 (s, t) => L s :: flattenPTree2 t @ [R s]
+  | sbs2 (t1, t2) => flattenPTree2 t1 @ flattenPTree2 t2
+
+(* collectSubtrees2 : stack2 * pTree2 list * string -> stack2 * pTree2 list
+ * REQUIRES: None.
+ * ENSURES: Returns the updated stack and list of subtrees collected until an OPEN2
+ *          with matching delimiter is found.
+ *)
+fun collectSubtrees2 (stack: stack2, subtrees: pTree2 list, s: string): stack2 * pTree2 list =
+  case stack of
+    T2 t :: rest => collectSubtrees2 (rest, t :: subtrees, s)
+  | OPEN2 s' :: rest =>
+      if s = s' then
+        (rest, subtrees)
+      else
+        raise Fail ("Mismatched delimiters: expected " ^ s' ^ ", found " ^ s)
+  | _ => raise Fail "Unmatched right delimiter"
+
+(* processStack2 : stack2 -> stack2
+ * REQUIRES: None.
+ * ENSURES: Combines adjacent T2 items on the stack using sbs2, returns the updated stack.
+ *)
+fun processStack2 (stack: stack2): stack2 =
+  case stack of
+    T2 t1 :: T2 t2 :: rest => processStack2 (T2 (sbs2 (t1, t2)) :: rest)
+  | _ => stack
+
+(* pp2 : pList2 * stack2 -> pTree2
+ * REQUIRES: None.
+ * ENSURES: Parses the pList2 ps into a pTree2, using the stack.
+ *)
+fun pp2 (ps: pList2, stack: stack2): pTree2 =
+  case ps of
+    [] =>
+      (case stack of
+         [T2 t] => t
+       | _ => raise Fail "Invalid input or incomplete processing")
+  | L s :: rest => pp2 (rest, OPEN2 s :: stack)
+  | R s :: rest =>
+      let
+        val (newStack, subtrees) = collectSubtrees2 (stack, [], s)
+        val contentTree =
+          case subtrees of
+            [] => empty2
+          | ts => List.foldr sbs2 empty2 ts
+        val nestedTree = nested2 (s, contentTree)
+        val updatedStack = T2 nestedTree :: newStack
+        val finalStack = processStack2 updatedStack
+      in
+        pp2 (rest, finalStack)
+      end
+  | _ => raise Fail "Invalid input"
+
+(* parsePar2 : pList2 -> pTree2
+ * REQUIRES: None.
+ * ENSURES: Parses the pList2 ps into a pTree2.
+ *)
+fun parsePar2 (ps: pList2): pTree2 =
+  pp2 (ps, [])
+
+(* TEST CASES FOR valid2 *)
+
+val true = valid2 [L "h1", R "h1"]
+val true = valid2 [L "h1", L "p", R "p", R "h1"]
+val true = valid2 [L "div", L "span", R "span", R "div"]
+val true = valid2 [L "a", L "b", R "b", L "c", R "c", R "a"]
+val false = valid2 [L "h1", R "p"]
+val false = valid2 [L "h1", L "p", R "h1", R "p"]
+val false = valid2 [R "h1", L "h1"]
+val false = valid2 [L "div", R "span", R "div"]
+val true = valid2 [L "html", L "body", R "body", R "html"]
+val false = valid2 [L "html", L "body", R "html", R "body"]
+
+(* TEST CASES FOR flattenPTree2 *)
+
+val [] = flattenPTree2 empty2
+val [L "html", L "head", R "head", L "body", R "body", R "html"] =
+    flattenPTree2 (nested2 ("html", sbs2 (nested2 ("head", empty2), nested2 ("body", empty2))))
+val [L "container", L "header", R "header", L "footer", R "footer", R "container"] =
+    flattenPTree2 (nested2 ("container", sbs2 (nested2 ("header", empty2), nested2 ("footer", empty2))))
+val [L "root", L "child1", R "child1", L "child2", R "child2", R "root"] =
+    flattenPTree2 (nested2 ("root", sbs2 (nested2 ("child1", empty2), nested2 ("child2", empty2))))
+val [L "div", R "div", L "span", R "span"] =
+    flattenPTree2 (sbs2 (nested2 ("div", empty2), nested2 ("span", empty2)))
+
+(* TEST CASES FOR pp2 and parsePar2 *)
+
+val plist1 = [L "h1", R "h1"]
+val plist2 = [L "h1", L "p", R "p", R "h1"]
+val pList3 = [L "h0", L "h1", L "h2", R "h2", R "h1", R "h0"]
+val stack2 = []
+
+val nested2 ("h1", empty2) = pp2 (plist1, stack2)
+val nested2 ("h1", nested2 ("p", empty2)) = pp2 (plist2, stack2)
+val nested2 ("h0", nested2 ("h1", nested2 ("h2", empty2))) = pp2 (pList3, stack2)
+
+val nested2 ("div", empty2) = parsePar2 [L "div", R "div"]
+val nested2 ("html", nested2 ("body", empty2)) = parsePar2 [L "html", L "body", R "body", R "html"]
+val sbs2 (nested2 ("p", empty2), nested2 ("span", empty2)) = parsePar2 [L "p", R "p", L "span", R "span"]
+val nested2 ("root", sbs2 (nested2 ("childA", empty2), nested2 ("childB", empty2))) =
+    parsePar2 [L "root", L "childA", R "childA", L "childB", R "childB", R "root"]
+
+(* Additional TEST CASES for helper functions *)
+
+(* Test case for collectSubtrees2 *)
+val stack_example3 = [T2 (nested2 ("div", empty2)), T2 (nested2 ("span", empty2)), OPEN2 "body", T2 (nested2 ("p", empty2))]
+val ([T2 t], [nested2 ("span", empty2), nested2 ("div", empty2)]) = collectSubtrees2 (stack_example3, [], "body")
+
+(* Test case for processStack2 *)
+val stack_example4 = [T2 (nested2 ("p", empty2)), T2 (nested2 ("span", empty2)), T2 (nested2 ("div", empty2))]
+val [T2 t_combined2] = processStack2 stack_example4
+val sbs2 (nested2 ("p", empty2), sbs2 (nested2 ("span", empty2), nested2 ("div", empty2))) = t_combined2
+
+(* Test case for collectSubtrees2 with unmatched right delimiter *)
+(* This will raise an exception *)
+(* val _ = collectSubtrees2 ([T2 (nested2 ("div", empty2))], [], "span") *)
+
+(* Test case for processStack2 with no adjacent T2 items *)
+val [OPEN2 "html"] = processStack2 [OPEN2 "html"]
